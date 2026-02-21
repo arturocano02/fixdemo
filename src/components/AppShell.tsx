@@ -3,7 +3,7 @@
 import { usePathname } from 'next/navigation'
 import BottomNav from './BottomNav'
 
-const protectedPaths = ['/chat', '/mine', '/shared']
+const protectedPaths = ['/chat', '/mine', '/shared', '/settings']
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
