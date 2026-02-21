@@ -46,7 +46,7 @@ function RankBadge({ rank }: { rank: number }) {
   )
 }
 
-function SkeletonCard({ rank }: { rank: number }) {
+function SkeletonCard() {
   return (
     <div className="card p-4">
       <div className="flex items-start gap-3">
@@ -118,7 +118,7 @@ export default function SharedPage() {
         {/* Skeletons */}
         {loading && (
           <div className="space-y-3">
-            {[1, 2, 3, 4].map((i) => <SkeletonCard key={i} rank={i} />)}
+            {[1, 2, 3, 4].map((i) => <SkeletonCard key={i} />)}
           </div>
         )}
 
