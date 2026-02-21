@@ -2,11 +2,36 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useRouter } from 'next/navigation'
+
+const MAX_MESSAGE_LENGTH = 2000
 
 interface Message {
   id?: string
   role: 'user' | 'assistant'
   content: string
+}
+
+const CONVERSATION_STARTERS = [
+  'Is free speech under threat?',
+  'Should billionaires exist?',
+  'Is democracy broken?',
+]
+
+function DebaterAvatar() {
+  return (
+    <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+      <svg width="14" height="14" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+        <circle cx="11" cy="11" r="3" fill="white" fillOpacity="0.9" />
+        <circle cx="25" cy="11" r="3" fill="white" fillOpacity="0.9" />
+        <circle cx="11" cy="25" r="3" fill="white" fillOpacity="0.9" />
+        <circle cx="25" cy="25" r="3" fill="white" fillOpacity="0.9" />
+        <line x1="11" y1="11" x2="11" y2="25" stroke="white" strokeWidth="2" strokeOpacity="0.6" strokeLinecap="round" />
+        <line x1="25" y1="11" x2="25" y2="25" stroke="white" strokeWidth="2" strokeOpacity="0.6" strokeLinecap="round" />
+        <line x1="11" y1="11" x2="25" y2="25" stroke="white" strokeWidth="2.5" strokeOpacity="0.9" strokeLinecap="round" />
+      </svg>
+    </div>
+  )
 }
 
 export default function ChatPage() {
@@ -18,6 +43,7 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const supabase = createClient()
+  const router = useRouter()
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -27,9 +53,8 @@ export default function ChatPage() {
     scrollToBottom()
   }, [messages, scrollToBottom])
 
-  // Load existing conversation
   useEffect(() => {
-    async function loadConversation() {
+    async function load() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
@@ -40,13 +65,9 @@ export default function ChatPage() {
 
       if (conversation?.id) {
         setConversationId(conversation.id)
-        // Load existing messages
-        const msgRes = await fetch(
-          `/api/messages?conversationId=${conversation.id}`,
-          {
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          }
-        )
+        const msgRes = await fetch(`/api/messages?conversationId=${conversation.id}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        })
         const msgs = await msgRes.json()
         if (Array.isArray(msgs)) {
           setMessages(msgs.map((m: { role: string; content: string }) => ({
@@ -57,22 +78,18 @@ export default function ChatPage() {
       }
       setLoading(false)
     }
-    loadConversation()
+    load()
   }, [supabase.auth])
 
-  const sendMessage = async () => {
-    if (!input.trim() || isStreaming) return
+  const sendMessage = async (text?: string) => {
+    const messageText = (text ?? input).trim()
+    if (!messageText || isStreaming) return
+    if (messageText.length > MAX_MESSAGE_LENGTH) return
 
-    const userMessage = input.trim()
     setInput('')
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto'
-    }
+    if (inputRef.current) inputRef.current.style.height = 'auto'
 
-    const newMessages: Message[] = [
-      ...messages,
-      { role: 'user', content: userMessage },
-    ]
+    const newMessages: Message[] = [...messages, { role: 'user', content: messageText }]
     setMessages(newMessages)
     setIsStreaming(true)
 
@@ -81,47 +98,27 @@ export default function ChatPage() {
       if (!session) throw new Error('Not authenticated')
 
       let currentConvId = conversationId
-
-      // Create conversation if needed
       if (!currentConvId) {
         const convRes = await fetch('/api/conversations', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         })
         const conv = await convRes.json()
         currentConvId = conv.id
         setConversationId(conv.id)
       }
 
-      // Save user message
       await fetch('/api/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          conversationId: currentConvId,
-          role: 'user',
-          content: userMessage,
-        }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ conversationId: currentConvId, role: 'user', content: messageText }),
       })
 
-      // Stream AI response
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
-          messages: newMessages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
           conversationId: currentConvId,
         }),
       })
@@ -133,18 +130,13 @@ export default function ChatPage() {
 
       const decoder = new TextDecoder()
       let assistantContent = ''
-
-      // Add empty assistant message
       setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-
         const chunk = decoder.decode(value)
-        const lines = chunk.split('\n\n')
-
-        for (const line of lines) {
+        for (const line of chunk.split('\n\n')) {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6))
@@ -152,27 +144,18 @@ export default function ChatPage() {
                 assistantContent += data.text
                 setMessages((prev) => {
                   const updated = [...prev]
-                  updated[updated.length - 1] = {
-                    role: 'assistant',
-                    content: assistantContent,
-                  }
+                  updated[updated.length - 1] = { role: 'assistant', content: assistantContent }
                   return updated
                 })
               }
-            } catch {
-              // Skip invalid JSON chunks
-            }
+            } catch { /* skip */ }
           }
         }
       }
-    } catch (error) {
-      console.error('Send message error:', error)
+    } catch {
       setMessages((prev) => [
         ...prev,
-        {
-          role: 'assistant',
-          content: 'Sorry, something went wrong. Please try again.',
-        },
+        { role: 'assistant', content: 'Something went wrong. Please try again.' },
       ])
     } finally {
       setIsStreaming(false)
@@ -186,92 +169,166 @@ export default function ChatPage() {
     }
   }
 
-  const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value)
-    // Auto-resize
+  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value.slice(0, MAX_MESSAGE_LENGTH)
+    setInput(val)
     e.target.style.height = 'auto'
     e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
   }
 
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    router.push('/login')
+  }
+
+  const charsLeft = MAX_MESSAGE_LENGTH - input.length
+  const showCharWarning = charsLeft < 200
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-pulse text-slate-400 text-sm">Loading...</div>
+      <div className="flex flex-col h-full bg-[#f8f9fc]">
+        <div className="flex items-center justify-between px-5 py-4 bg-white border-b border-[#eaedf2]">
+          <div className="skeleton w-16 h-5" />
+          <div className="skeleton w-7 h-7 rounded-full" />
+        </div>
+        <div className="flex-1 px-4 pt-4 space-y-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className={`flex ${i % 2 === 0 ? 'justify-end' : 'justify-start'}`}>
+              <div className={`skeleton h-10 rounded-2xl ${i % 2 === 0 ? 'w-2/3' : 'w-1/2'}`} />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full" style={{ background: 'var(--bg)' }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-3.5 bg-white border-b border-[#eaedf2] flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <svg width="22" height="22" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+            <rect width="36" height="36" rx="10" fill="#4f46e5" />
+            <circle cx="11" cy="11" r="3" fill="white" fillOpacity="0.9" />
+            <circle cx="25" cy="11" r="3" fill="white" fillOpacity="0.9" />
+            <circle cx="11" cy="25" r="3" fill="white" fillOpacity="0.9" />
+            <circle cx="25" cy="25" r="3" fill="white" fillOpacity="0.9" />
+            <line x1="11" y1="11" x2="11" y2="25" stroke="white" strokeWidth="2" strokeOpacity="0.6" strokeLinecap="round" />
+            <line x1="25" y1="11" x2="25" y2="25" stroke="white" strokeWidth="2" strokeOpacity="0.6" strokeLinecap="round" />
+            <line x1="11" y1="11" x2="25" y2="25" stroke="white" strokeWidth="2.5" strokeOpacity="0.9" strokeLinecap="round" />
+          </svg>
+          <span className="text-[15px] font-semibold text-slate-900 tracking-tight">nexo</span>
+        </div>
+        <button
+          onClick={handleSignOut}
+          className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all"
+          title="Sign out"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+          </svg>
+        </button>
+      </div>
+
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-2">
+      <div className="flex-1 overflow-y-auto px-4 pt-5 pb-3">
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center px-8">
-            <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center mb-4">
-              <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+          <div className="flex flex-col items-center justify-center h-full text-center px-6 animate-fade-up">
+            <div className="w-14 h-14 rounded-2xl bg-indigo-600 flex items-center justify-center mb-5 shadow-lg shadow-indigo-200">
+              <svg width="26" height="26" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="3" fill="white" fillOpacity="0.9" />
+                <circle cx="25" cy="11" r="3" fill="white" fillOpacity="0.9" />
+                <circle cx="11" cy="25" r="3" fill="white" fillOpacity="0.9" />
+                <circle cx="25" cy="25" r="3" fill="white" fillOpacity="0.9" />
+                <line x1="11" y1="11" x2="11" y2="25" stroke="white" strokeWidth="2" strokeOpacity="0.6" strokeLinecap="round" />
+                <line x1="25" y1="11" x2="25" y2="25" stroke="white" strokeWidth="2" strokeOpacity="0.6" strokeLinecap="round" />
+                <line x1="11" y1="11" x2="25" y2="25" stroke="white" strokeWidth="2.5" strokeOpacity="0.9" strokeLinecap="round" />
               </svg>
             </div>
-            <h2 className="text-lg font-semibold text-slate-900 mb-2">
-              Start a conversation
+            <h2 className="text-[17px] font-semibold text-slate-900 mb-1.5">
+              The debater is ready.
             </h2>
-            <p className="text-sm text-slate-500 max-w-xs">
-              Share your political views and I&apos;ll challenge you to think deeper. No topic is off limits.
+            <p className="text-sm text-slate-500 max-w-[240px] leading-relaxed mb-7">
+              Say anything. Every opinion will be challenged — that&apos;s the point.
             </p>
+            <div className="flex flex-col gap-2 w-full max-w-[280px]">
+              {CONVERSATION_STARTERS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => sendMessage(s)}
+                  className="w-full py-2.5 px-4 text-sm text-slate-700 bg-white border border-[#eaedf2] rounded-xl hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50 transition-all text-left shadow-sm"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`flex mb-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-200`}
-          >
+        <div className="space-y-4">
+          {messages.map((msg, i) => (
             <div
-              className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
-                msg.role === 'user'
-                  ? 'bg-indigo-600 text-white rounded-br-md'
-                  : 'bg-slate-100 text-slate-900 rounded-bl-md'
-              }`}
+              key={i}
+              className={`flex items-end gap-2 animate-fade-up ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              style={{ animationDelay: `${Math.min(i * 30, 200)}ms` }}
             >
-              <p className="whitespace-pre-wrap">{msg.content}</p>
+              {msg.role === 'assistant' && <DebaterAvatar />}
+              <div
+                className={`max-w-[78%] px-4 py-3 rounded-2xl text-[14.5px] leading-relaxed shadow-sm ${
+                  msg.role === 'user'
+                    ? 'bg-indigo-600 text-white rounded-br-[6px]'
+                    : 'bg-white border border-[#eaedf2] text-slate-800 rounded-bl-[6px]'
+                }`}
+              >
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
 
         {isStreaming && messages[messages.length - 1]?.content === '' && (
-          <div className="flex justify-start mb-3">
-            <div className="bg-slate-100 px-4 py-3 rounded-2xl rounded-bl-md">
+          <div className="flex items-end gap-2 mt-4 animate-fade-in">
+            <DebaterAvatar />
+            <div className="bg-white border border-[#eaedf2] px-4 py-3.5 rounded-2xl rounded-bl-[6px] shadow-sm">
               <div className="flex gap-1.5">
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                <div className="typing-dot" />
+                <div className="typing-dot" />
+                <div className="typing-dot" />
               </div>
             </div>
           </div>
         )}
 
-        <div ref={messagesEndRef} />
+        <div ref={messagesEndRef} className="h-2" />
       </div>
 
-      {/* Input bar */}
-      <div className="border-t border-slate-100 bg-white px-4 py-3 pb-safe">
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={handleTextareaInput}
-            onKeyDown={handleKeyDown}
-            placeholder="What's on your mind?"
-            rows={1}
-            className="flex-1 resize-none px-4 py-3 bg-slate-50 rounded-2xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white border border-slate-200 transition-all"
-            disabled={isStreaming}
-          />
+      {/* Input */}
+      <div className="bg-white border-t border-[#eaedf2] px-4 pt-3 pb-safe flex-shrink-0">
+        <div className="flex items-end gap-2.5">
+          <div className="flex-1 relative">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder="What's on your mind?"
+              rows={1}
+              maxLength={MAX_MESSAGE_LENGTH}
+              className="w-full resize-none px-4 py-3 bg-[#f8f9fc] rounded-2xl text-[14.5px] text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white border border-[#e2e6ee] transition-all pr-4"
+              disabled={isStreaming}
+            />
+            {showCharWarning && (
+              <span className="absolute right-3 bottom-3 text-[10px] tabular-nums text-slate-400">
+                {charsLeft}
+              </span>
+            )}
+          </div>
           <button
-            onClick={sendMessage}
+            onClick={() => sendMessage()}
             disabled={!input.trim() || isStreaming}
-            className="flex-shrink-0 w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-indigo-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            className="flex-shrink-0 w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-indigo-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md hover:shadow-indigo-200 active:scale-95"
           >
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" strokeWidth={2} stroke="currentColor">
+            <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" strokeWidth={2.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
             </svg>
           </button>

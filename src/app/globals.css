@@ -3,61 +3,146 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #0f172a;
+  --bg: #f8f9fc;
+  --surface: #ffffff;
+  --border: #eaedf2;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --text-tertiary: #94a3b8;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
 }
 
-html, body {
+html,
+body,
+#__next {
   height: 100%;
-  overflow: hidden;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
+  background-color: var(--bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
 }
 
-/* Safe area padding for notched devices */
+/* ── Safe area ── */
 .pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
 }
 
-/* Smooth animations */
-@keyframes fade-in {
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #dde1ea; border-radius: 99px; }
+
+/* ── Animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
   from { opacity: 0; }
-  to { opacity: 1; }
+  to   { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30%           { transform: translateY(-5px); }
 }
 
-@keyframes slide-in-from-bottom-2 {
-  from { transform: translateY(0.5rem); }
-  to { transform: translateY(0); }
+.animate-fade-up  { animation: fadeUp  0.28s ease-out both; }
+.animate-fade-in  { animation: fadeIn  0.2s  ease-out both; }
+.animate-scale-in { animation: scaleIn 0.2s  ease-out both; }
+
+/* Stagger helpers */
+.delay-50  { animation-delay:  50ms; }
+.delay-100 { animation-delay: 100ms; }
+.delay-150 { animation-delay: 150ms; }
+.delay-200 { animation-delay: 200ms; }
+
+/* ── Skeleton loader ── */
+.skeleton {
+  background: linear-gradient(90deg, #f1f4f9 25%, #e4e9f2 50%, #f1f4f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 8px;
 }
 
-.animate-in {
-  animation: fade-in 0.2s ease-out, slide-in-from-bottom-2 0.2s ease-out;
+/* ── Card ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 1px 4px rgba(15,23,42,0.05), 0 1px 2px rgba(15,23,42,0.04);
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 4px;
+/* ── Input ── */
+.input-field {
+  width: 100%;
+  padding: 12px 16px;
+  background: #f8f9fc;
+  border: 1.5px solid #e2e6ee;
+  border-radius: 12px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+.input-field::placeholder { color: var(--text-tertiary); }
+.input-field:focus {
+  background: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79,70,229,0.1);
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+/* ── Primary button ── */
+.btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 13px 20px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(79,70,229,0.28);
 }
-
-::-webkit-scrollbar-thumb {
-  background: #e2e8f0;
-  border-radius: 2px;
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 4px 16px rgba(79,70,229,0.36);
+  transform: translateY(-1px);
 }
+.btn-primary:active:not(:disabled) { transform: translateY(0); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #cbd5e1;
+/* ── Typing dots ── */
+.typing-dot {
+  width: 7px;
+  height: 7px;
+  background: #94a3b8;
+  border-radius: 50%;
+  animation: bounce 1.2s infinite;
 }
+.typing-dot:nth-child(2) { animation-delay: 0.18s; }
+.typing-dot:nth-child(3) { animation-delay: 0.36s; }
 
-/* Border color that matches Tailwind naming */
+/* ── Custom border shade ── */
 @layer utilities {
-  .border-slate-150 {
-    border-color: #e8ecf1;
-  }
+  .border-surface { border-color: var(--border); }
 }

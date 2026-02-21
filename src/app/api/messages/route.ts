@@ -26,6 +26,27 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { conversationId, role, content } = body
 
+    // Validate inputs
+    if (!conversationId || typeof conversationId !== 'string') {
+      return NextResponse.json({ error: 'Invalid conversationId' }, { status: 400 })
+    }
+    if (!['user', 'assistant'].includes(role)) {
+      return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
+    }
+    if (typeof content !== 'string' || content.length === 0 || content.length > 2000) {
+      return NextResponse.json({ error: 'Invalid content' }, { status: 400 })
+    }
+
+    // Verify conversation belongs to user
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('id', conversationId)
+      .single()
+    if (!conv) {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
     const admin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,

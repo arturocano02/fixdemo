@@ -42,8 +42,17 @@ function getSupabaseClient(authHeader: string | null) {
   )
 }
 
+const MAX_MESSAGE_LENGTH = 2000
+const MAX_MESSAGES_HISTORY = 40
+
 export async function POST(request: NextRequest) {
   try {
+    // Reject oversized payloads early
+    const contentLength = request.headers.get('content-length')
+    if (contentLength && parseInt(contentLength) > 200_000) {
+      return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+    }
+
     const authHeader = request.headers.get('authorization')
     const supabase = getSupabaseClient(authHeader)
 
@@ -59,8 +68,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Messages array required' }, { status: 400 })
     }
 
+    // Validate each message
+    for (const msg of messages) {
+      if (!msg.role || !['user', 'assistant'].includes(msg.role)) {
+        return NextResponse.json({ error: 'Invalid message role' }, { status: 400 })
+      }
+      if (typeof msg.content !== 'string' || msg.content.length > MAX_MESSAGE_LENGTH) {
+        return NextResponse.json({ error: 'Message content too long' }, { status: 400 })
+      }
+    }
+
+    // Truncate history to prevent runaway context
+    const truncatedMessages = messages.slice(-MAX_MESSAGES_HISTORY)
+
     // Format messages for Anthropic
-    const anthropicMessages = messages.map((msg: { role: string; content: string }) => ({
+    const anthropicMessages = truncatedMessages.map((msg: { role: string; content: string }) => ({
       role: msg.role as 'user' | 'assistant',
       content: msg.content,
     }))
