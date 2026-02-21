@@ -26,6 +26,7 @@ export default function LoginPage() {
   const [isSignUp, setIsSignUp] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
 
@@ -37,21 +38,48 @@ export default function LoginPage() {
     }
     setLoading(true)
     setError(null)
+    setNotice(null)
 
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email, password })
+        const emailRedirectTo =
+          typeof window !== 'undefined'
+            ? `${window.location.origin}/auth/callback`
+            : undefined
+
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo },
+        })
         if (error) throw error
-        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
-        if (signInError) throw signInError
+        setNotice('Account created. Check your email and confirm before signing in.')
+        setIsSignUp(false)
+        setPassword('')
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
+        setNotice(null)
+        setError(null)
+        router.push('/chat')
+        router.refresh()
+        return
       }
-      router.push('/chat')
-      router.refresh()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
+      const message = err instanceof Error ? err.message : 'Something went wrong'
+
+      if (!isSignUp && /invalid login credentials/i.test(message)) {
+        setIsSignUp(true)
+        setError('No account found for this email. Switched to Create account.')
+        return
+      }
+
+      if (/email not confirmed/i.test(message)) {
+        setError('Please confirm your email from your inbox, then sign in.')
+        return
+      }
+
+      setError(message)
     } finally {
       setLoading(false)
     }
@@ -80,7 +108,7 @@ export default function LoginPage() {
         <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
           <button
             type="button"
-            onClick={() => { setIsSignUp(false); setError(null) }}
+            onClick={() => { setIsSignUp(false); setError(null); setNotice(null) }}
             className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
               !isSignUp
                 ? 'bg-white text-slate-900 shadow-sm'
@@ -91,7 +119,7 @@ export default function LoginPage() {
           </button>
           <button
             type="button"
-            onClick={() => { setIsSignUp(true); setError(null) }}
+            onClick={() => { setIsSignUp(true); setError(null); setNotice(null) }}
             className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
               isSignUp
                 ? 'bg-white text-slate-900 shadow-sm'
@@ -144,6 +172,15 @@ export default function LoginPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
                 </svg>
                 {error}
+              </div>
+            )}
+
+            {notice && (
+              <div className="flex items-start gap-2.5 text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 px-4 py-3 rounded-xl animate-fade-in">
+                <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m6 2.25a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {notice}
               </div>
             )}
 
