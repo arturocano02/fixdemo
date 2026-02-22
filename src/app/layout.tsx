@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import AppShell from "@/components/AppShell";
 
@@ -34,6 +36,8 @@ export default function RootLayout({
         className={`${geistSans.variable} font-sans antialiased bg-white text-slate-900`}
       >
         <AppShell>{children}</AppShell>
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
