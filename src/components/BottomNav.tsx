@@ -71,14 +71,14 @@ export default function BottomNav() {
         borderTop: '1px solid #eaedf2',
       }}
     >
-      <div className="flex items-stretch h-16 max-w-lg mx-auto pb-safe">
+      <div className="flex items-stretch h-16 pb-safe">
         {tabs.map((tab) => {
           const active = pathname === tab.href
           return (
             <Link
               key={tab.href}
               href={tab.href}
-              className={`nav-tab transition-colors duration-150 ${active ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
+              className={`flex-1 flex flex-col items-center justify-center gap-1 relative transition-colors duration-150 ${active ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
             >
               <div className={`absolute top-0 left-1/2 -translate-x-1/2 h-0.5 rounded-full bg-indigo-600 transition-all duration-200 ${active ? 'w-6 opacity-100' : 'w-0 opacity-0'}`} />
               {tab.icon(active)}
