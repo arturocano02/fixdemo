@@ -51,35 +51,61 @@ function confidenceWeight(confidence: string): number {
   }
 }
 
-// Simple string similarity (Levenshtein-based)
-function similarity(a: string, b: string): number {
-  const al = a.toLowerCase().trim()
-  const bl = b.toLowerCase().trim()
-  if (al === bl) return 1.0
+// Ask Claude to match an extracted issue against existing canonical issues
+async function matchIssueWithClaude(
+  extractedName: string,
+  existingIssues: Array<{ id: string; name: string; description: string | null; aliases: string[] }>
+): Promise<{ match: 'existing' | 'new'; canonicalId?: string; description?: string }> {
+  if (existingIssues.length === 0) {
+    return { match: 'new' }
+  }
 
-  const longer = al.length > bl.length ? al : bl
-  const shorter = al.length > bl.length ? bl : al
+  const issueList = existingIssues.map((issue, i) => {
+    let entry = `${i + 1}. "${issue.name}"`
+    if (issue.description) entry += ` — ${issue.description}`
+    if (issue.aliases && issue.aliases.length > 0) entry += ` (also known as: ${issue.aliases.join(', ')})`
+    return entry
+  }).join('\n')
 
-  if (longer.length === 0) return 1.0
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 256,
+    messages: [
+      {
+        role: 'user',
+        content: `I extracted the political issue "${extractedName}" from a user's conversation.
 
-  const costs: number[] = []
-  for (let i = 0; i <= longer.length; i++) {
-    let lastValue = i
-    for (let j = 0; j <= shorter.length; j++) {
-      if (i === 0) {
-        costs[j] = j
-      } else if (j > 0) {
-        let newValue = costs[j - 1]
-        if (longer.charAt(i - 1) !== shorter.charAt(j - 1)) {
-          newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1
-        }
-        costs[j - 1] = lastValue
-        lastValue = newValue
+Here are the existing canonical issues in our database:
+
+${issueList}
+
+Does "${extractedName}" match any of these existing issues? Consider semantic meaning, not just string similarity. For example, "gun control" and "Second Amendment rights" are the same issue. "Climate action" and "Carbon emissions policy" are the same issue.
+
+Respond with ONLY a JSON object:
+- If it matches an existing issue: {"match": "existing", "index": <1-based index from the list>}
+- If it's genuinely new: {"match": "new", "description": "<brief 1-sentence description of this issue>"}`,
+      },
+    ],
+  })
+
+  const text = response.content[0].type === 'text' ? response.content[0].text : ''
+
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return { match: 'new' }
+    const result = JSON.parse(jsonMatch[0])
+
+    if (result.match === 'existing' && typeof result.index === 'number') {
+      const idx = result.index - 1
+      if (idx >= 0 && idx < existingIssues.length) {
+        return { match: 'existing', canonicalId: existingIssues[idx].id }
       }
     }
-    if (i > 0) costs[shorter.length] = lastValue
+
+    return { match: 'new', description: result.description || undefined }
+  } catch {
+    return { match: 'new' }
   }
-  return (longer.length - costs[shorter.length]) / longer.length
 }
 
 export async function POST(request: NextRequest) {
@@ -169,7 +195,6 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // Try to extract JSON from the response (handle potential markdown wrapping)
       const jsonMatch = responseText.match(/\{[\s\S]*\}/)
       if (!jsonMatch) throw new Error('No JSON found in response')
       analysis = JSON.parse(jsonMatch[0])
@@ -185,34 +210,59 @@ export async function POST(request: NextRequest) {
     if (!analysis.issues) analysis.issues = []
     if (!analysis.connections) analysis.connections = []
 
-    // 5. Fetch existing canonical issues for matching
+    // 5. Fetch ALL existing canonical issues for smart matching
     const { data: existingIssues } = await admin
       .from('canonical_issues')
-      .select('*')
+      .select('id, name, description, aliases')
       .eq('is_active', true)
+      .is('merged_into_id', null)
 
-    const canonicalMap = new Map<string, string>() // issue name -> canonical issue id
+    const existingForMatching = (existingIssues || []).map((issue) => ({
+      id: issue.id as string,
+      name: issue.name as string,
+      description: issue.description as string | null,
+      aliases: (issue.aliases || []) as string[],
+    }))
 
-    // 6. Process each extracted issue
+    const canonicalMap = new Map<string, string>() // extracted issue name -> canonical issue id
+
+    // 6. Process each extracted issue with Claude-based smart matching
     for (const issue of analysis.issues) {
-      // Find matching canonical issue
       let canonicalId: string = ''
 
-      if (existingIssues) {
-        for (const existing of existingIssues) {
-          if (similarity(issue.name, existing.name) > 0.8) {
-            canonicalId = existing.id
-            canonicalMap.set(issue.name, canonicalId)
-            break
+      // Use Claude to match against existing issues
+      const matchResult = await matchIssueWithClaude(issue.name, existingForMatching)
+
+      if (matchResult.match === 'existing' && matchResult.canonicalId) {
+        canonicalId = matchResult.canonicalId
+        canonicalMap.set(issue.name, canonicalId)
+
+        // Add extracted name as an alias if it's not already there
+        const matched = existingForMatching.find((e) => e.id === canonicalId)
+        if (matched) {
+          const currentAliases = matched.aliases || []
+          const nameLower = issue.name.toLowerCase()
+          const alreadyKnown =
+            matched.name.toLowerCase() === nameLower ||
+            currentAliases.some((a) => a.toLowerCase() === nameLower)
+
+          if (!alreadyKnown) {
+            await admin
+              .from('canonical_issues')
+              .update({ aliases: [...currentAliases, issue.name] })
+              .eq('id', canonicalId)
+            // Update local copy for subsequent matches
+            matched.aliases = [...currentAliases, issue.name]
           }
         }
-      }
-
-      // Create new canonical issue if no match
-      if (canonicalId === '') {
+      } else {
+        // Create new canonical issue
         const { data: newIssue, error: insertError } = await admin
           .from('canonical_issues')
-          .insert({ name: issue.name })
+          .insert({
+            name: issue.name,
+            description: matchResult.description || null,
+          })
           .select()
           .single()
 
@@ -232,6 +282,13 @@ export async function POST(request: NextRequest) {
           }
         } else {
           canonicalId = newIssue.id
+          // Add to local list for subsequent matching in this batch
+          existingForMatching.push({
+            id: newIssue.id,
+            name: issue.name,
+            description: matchResult.description || null,
+            aliases: [],
+          })
         }
         canonicalMap.set(issue.name, canonicalId)
       }
@@ -257,7 +314,6 @@ export async function POST(request: NextRequest) {
       }
 
       // Update aggregate issues
-      // First get current aggregate
       const { data: currentAggregate } = await admin
         .from('aggregate_issues')
         .select('*')
@@ -267,9 +323,8 @@ export async function POST(request: NextRequest) {
       const weight = issue.intensity * confidenceWeight(issue.confidence)
 
       if (currentAggregate) {
-        // Update existing
         const histogram = currentAggregate.stance_histogram || {}
-        const stanceKey = issue.stance.substring(0, 50) // Truncate for key
+        const stanceKey = issue.stance.substring(0, 50)
         histogram[stanceKey] = (histogram[stanceKey] || 0) + 1
 
         await admin
@@ -282,7 +337,6 @@ export async function POST(request: NextRequest) {
           })
           .eq('canonical_issue_id', canonicalId)
       } else {
-        // Create new aggregate
         const histogram: Record<string, number> = {}
         histogram[issue.stance.substring(0, 50)] = 1
 
