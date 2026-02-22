@@ -70,6 +70,7 @@ export default function MinePage() {
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [refreshResult, setRefreshResult] = useState<string | null>(null)
+  const [reflectionPrompt, setReflectionPrompt] = useState<string | null>(null)
   const supabase = createClient()
 
   const loadData = useCallback(async () => {
@@ -89,6 +90,17 @@ export default function MinePage() {
     const { data: profile } = await supabase.from('profiles').select('last_refresh_at').single()
     if (profile?.last_refresh_at) setLastRefresh(profile.last_refresh_at)
 
+    // Load latest reflection prompt
+    const { data: prompts } = await supabase
+      .from('reflection_prompts')
+      .select('prompt_text')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (prompts && prompts.length > 0) {
+      setReflectionPrompt(prompts[0].prompt_text)
+    }
+
     setLoading(false)
   }, [supabase])
 
@@ -107,6 +119,9 @@ export default function MinePage() {
       const result = await res.json()
       if (result.success) {
         await loadData()
+        if (result.reflectionPrompt) {
+          setReflectionPrompt(result.reflectionPrompt)
+        }
         setRefreshResult(
           result.issuesExtracted > 0
             ? `Found ${result.issuesExtracted} issue${result.issuesExtracted !== 1 ? 's' : ''}`
@@ -180,6 +195,23 @@ export default function MinePage() {
         {refreshResult && (
           <div className="mb-4 text-sm text-center text-slate-600 bg-white border border-[#eaedf2] rounded-xl py-2.5 px-4 animate-fade-in shadow-sm">
             {refreshResult}
+          </div>
+        )}
+
+        {/* Reflection prompt */}
+        {!loading && reflectionPrompt && issues.length > 0 && (
+          <div className="mb-5 p-4 rounded-xl bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 animate-fade-up">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] uppercase tracking-wide font-semibold text-indigo-500 mb-1.5">Something to think about</p>
+                <p className="text-[13.5px] text-slate-700 leading-relaxed">{reflectionPrompt}</p>
+              </div>
+            </div>
           </div>
         )}
 

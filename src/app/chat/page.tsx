@@ -181,6 +181,27 @@ export default function ChatPage() {
     router.push('/login')
   }
 
+  const handleNewConversation = async () => {
+    if (isStreaming) return
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      // Deactivate current conversation
+      if (conversationId) {
+        await fetch('/api/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        })
+      }
+
+      setMessages([])
+      setConversationId(null)
+    } catch {
+      // Silently fail — user can try again
+    }
+  }
+
   const charsLeft = MAX_MESSAGE_LENGTH - input.length
   const showCharWarning = charsLeft < 200
 
@@ -219,15 +240,30 @@ export default function ChatPage() {
           </svg>
           <span className="text-[15px] font-semibold text-slate-900 tracking-tight">nexo</span>
         </div>
-        <button
-          onClick={handleSignOut}
-          className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all"
-          title="Sign out"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-1.5">
+          {messages.length > 0 && (
+            <button
+              onClick={handleNewConversation}
+              disabled={isStreaming}
+              className="h-8 px-3 rounded-full flex items-center justify-center gap-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-all text-[12px] font-medium disabled:opacity-30"
+              title="New conversation"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              New
+            </button>
+          )}
+          <button
+            onClick={handleSignOut}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all"
+            title="Sign out"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Messages */}

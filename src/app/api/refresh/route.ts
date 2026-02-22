@@ -313,7 +313,7 @@ export async function POST(request: NextRequest) {
         console.error('Failed to upsert user issue:', upsertError)
       }
 
-      // Update aggregate issues
+      // Update aggregate issues with proper confidence weighting
       const { data: currentAggregate } = await admin
         .from('aggregate_issues')
         .select('*')
@@ -327,12 +327,22 @@ export async function POST(request: NextRequest) {
         const stanceKey = issue.stance.substring(0, 50)
         histogram[stanceKey] = (histogram[stanceKey] || 0) + 1
 
+        // Calculate consensus: 1.0 = everyone agrees, 0.0 = maximally divided
+        const totalVotes = Object.values(histogram).reduce((s: number, v) => s + (v as number), 0)
+        const maxVotes = Math.max(...Object.values(histogram).map(v => v as number))
+        const consensusScore = totalVotes > 0 ? maxVotes / totalVotes : 0
+
+        // Energy = cumulative weighted intensity (higher confidence = more energy contribution)
+        const newTotalUsers = currentAggregate.total_users + 1
+        const newEnergyScore = currentAggregate.energy_score + weight
+
         await admin
           .from('aggregate_issues')
           .update({
-            total_users: currentAggregate.total_users + 1,
-            energy_score: currentAggregate.energy_score + weight,
+            total_users: newTotalUsers,
+            energy_score: newEnergyScore,
             stance_histogram: histogram,
+            consensus_score: consensusScore,
             updated_at: new Date().toISOString(),
           })
           .eq('canonical_issue_id', canonicalId)
@@ -345,6 +355,7 @@ export async function POST(request: NextRequest) {
           total_users: 1,
           energy_score: weight,
           stance_histogram: histogram,
+          consensus_score: 1.0, // First user = full consensus
         })
       }
     }
@@ -416,11 +427,47 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', user.id)
 
+    // 10. Generate reflection prompt (non-blocking — don't fail the whole refresh)
+    let reflectionPrompt: string | null = null
+    if (analysis.issues.length > 0) {
+      try {
+        const issuesSummary = analysis.issues
+          .map((i) => `${i.name}: ${i.stance}`)
+          .join('\n')
+
+        const reflectionResponse = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 256,
+          messages: [
+            {
+              role: 'user',
+              content: `Based on these political positions a user just expressed:\n\n${issuesSummary}\n\nGenerate ONE thought-provoking reflection question (1-2 sentences) that could help them think more deeply about their views. The question should highlight a tension, an assumption, or a connection they might not have considered. Be specific to their actual views, not generic.\n\nReturn ONLY the question, nothing else.`,
+            },
+          ],
+        })
+
+        reflectionPrompt =
+          reflectionResponse.content[0].type === 'text'
+            ? reflectionResponse.content[0].text.trim()
+            : null
+
+        if (reflectionPrompt) {
+          await admin.from('reflection_prompts').insert({
+            user_id: user.id,
+            prompt_text: reflectionPrompt,
+          })
+        }
+      } catch (e) {
+        console.error('Reflection prompt generation failed (non-fatal):', e)
+      }
+    }
+
     return NextResponse.json({
       success: true,
       issuesExtracted: analysis.issues.length,
       connectionsExtracted: analysis.connections.length,
       messagesProcessed: messages.length,
+      reflectionPrompt,
     })
   } catch (error) {
     console.error('Refresh API error:', error)

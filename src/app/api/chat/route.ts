@@ -87,11 +87,50 @@ export async function POST(request: NextRequest) {
       content: msg.content,
     }))
 
+    // Fetch user's previously extracted political positions for context
+    let systemPrompt = DEBATER_SYSTEM_PROMPT
+    try {
+      const adminClient = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+      )
+
+      const { data: userIssues } = await adminClient
+        .from('user_issues')
+        .select('stance, intensity, confidence, canonical_issues(name)')
+        .eq('user_id', user.id)
+        .order('intensity', { ascending: false })
+        .limit(10)
+
+      if (userIssues && userIssues.length > 0) {
+        const issueContext = userIssues
+          .map((issue: Record<string, unknown>) => {
+            const ci = issue.canonical_issues as Record<string, unknown> | null
+            const name = ci?.name ?? 'Unknown'
+            const intensity = issue.intensity as number
+            const label = intensity >= 0.8 ? 'passionate' : intensity >= 0.5 ? 'clear opinion' : 'mentioned'
+            return `- ${name}: "${issue.stance}" (${label}, ${issue.confidence} confidence)`
+          })
+          .join('\n')
+
+        systemPrompt += `\n\n--- CONTEXT: USER'S KNOWN POSITIONS ---
+The user has previously expressed these political positions through past conversations. Use this to make your challenges more specific, reference their past stated views when relevant, probe for consistency, and push them to go deeper on topics they care about.
+
+${issueContext}
+
+Don't list these back to the user. Weave your knowledge of their positions naturally into the debate.`
+      }
+    } catch (e) {
+      // Non-fatal: proceed without context if fetch fails
+      console.error('Failed to fetch user issues for context:', e)
+    }
+
     // Stream response from Anthropic
     const stream = anthropic.messages.stream({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
-      system: DEBATER_SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: anthropicMessages,
     })
 

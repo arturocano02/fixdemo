@@ -72,6 +72,15 @@ export default function SettingsPage() {
       })
 
       if (updateError) throw updateError
+
+      // Sync display_name to profiles table
+      if (payload.full_name) {
+        await supabase
+          .from('profiles')
+          .update({ display_name: payload.full_name })
+          .eq('id', (await supabase.auth.getUser()).data.user?.id)
+      }
+
       setMessage('Profile updated.')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not save changes')
